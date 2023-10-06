@@ -1,0 +1,95 @@
+name: static-website-aws-yaml
+runtime: yaml
+description: A Pulumi YAML program to deploy a static website on AWS
+# Import the program's configuration settings.
+config:
+  errorDocument:
+    type: string
+    default: error.html
+  indexDocument:
+    type: string
+    default: index.html
+  path:
+    type: string
+    default: ./www
+# Export the URLs and hostnames of the bucket and distribution.
+outputs:
+  cdnHostname: ${cdn.domainName}
+  cdnURL: https://${cdn.domainName}
+  originHostname: ${bucket.websiteEndpoint}
+  originURL: http://${bucket.websiteEndpoint}
+resources:
+  # Create an S3 bucket and configure it as a website.
+  bucket:
+    properties:
+      website:
+        errorDocument: ${errorDocument}
+        indexDocument: ${indexDocument}
+    type: aws:s3:Bucket
+  # Use a synced folder to manage the files of the website.
+  bucket-folder:
+    options:
+      dependsOn:
+        - ${ownership-controls}
+        - ${public-access-block}
+    properties:
+      acl: public-read
+      bucketName: ${bucket.bucket}
+      path: ${path}
+    type: synced-folder:index:S3BucketFolder
+  # Create a CloudFront CDN to distribute and cache the website.
+  cdn:
+    properties:
+      customErrorResponses:
+        - errorCode: 404
+          responseCode: 404
+          responsePagePath: /${errorDocument}
+      defaultCacheBehavior:
+        allowedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+        cachedMethods:
+          - GET
+          - HEAD
+          - OPTIONS
+        compress: true
+        defaultTtl: 600
+        forwardedValues:
+          cookies:
+            forward: all
+          queryString: true
+        maxTtl: 600
+        minTtl: 600
+        targetOriginId: ${bucket.arn}
+        viewerProtocolPolicy: redirect-to-https
+      enabled: true
+      origins:
+        - customOriginConfig:
+            httpPort: 80
+            httpsPort: 443
+            originProtocolPolicy: http-only
+            originSslProtocols:
+              - TLSv1.2
+          domainName: ${bucket.websiteEndpoint}
+          originId: ${bucket.arn}
+      priceClass: PriceClass_100
+      restrictions:
+        geoRestriction:
+          restrictionType: none
+      viewerCertificate:
+        cloudfrontDefaultCertificate: true
+    type: aws:cloudfront:Distribution
+  # Assign ownership controls to the new S3 bucket
+  ownership-controls:
+    properties:
+      bucket: ${bucket.id}
+      rule:
+        objectOwnership: ObjectWriter
+    type: aws:s3:BucketOwnershipControls
+  # Configure the public access block for the new S3 bucket
+  public-access-block:
+    properties:
+      blockPublicAcls: false
+      bucket: ${bucket.id}
+    type: aws:s3:BucketPublicAccessBlock
